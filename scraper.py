@@ -24,7 +24,10 @@ def is_valid(url):
 
     # Ask TA: in the 4 given domains only?
     # Ask for crawl permission? Check robots.txt?
-    # 
+    # Seed: given? all 4 domains?
+    # exlucde pdf???
+    # crawler delay: 0.5s; 1s - 3s; 5s - 10s
+    # RSS feeds? or not needed?
 
     try:
         parsed = urlparse(url)
@@ -44,6 +47,5 @@ def is_valid(url):
         print ("TypeError for ", parsed)
         raise
 
-# hoi TA: minh tu viet them o day ha?
-# kiem tra: ask for crawl permission
+# trap solution: list of url visited
 # 
