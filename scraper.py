@@ -22,12 +22,13 @@ def is_valid(url):
     # If you decide to crawl it, return True; otherwise return False.
     # There are already some conditions that return False.
 
-    # Ask TA: in the 4 given domains only?
-    # Ask for crawl permission? Check robots.txt?
-    # Seed: given? all 4 domains?
-    # exlucde pdf???
-    # crawler delay: 0.5s; 1s - 3s; 5s - 10s
-    # RSS feeds? or not needed?
+    # Ask TA: in the 4 given domains only? YES, add all 4 domains
+    # Ask for crawl permission? Check robots.txt? YES, check robots.txt and don't crawl disallowed pages
+    # Seed: given? all 4 domains? YES, add all 4 domains
+    # crawler delay: 0.5s; 1s - 3s; 5s - 10s? Whaterver, just add a delay (already in config.ini)
+    # RSS feeds? or not needed? NO, parse HTML using beautifulsoup and stuff
+    # multiple runs at once to test? YES, before Feb 07
+    # robots.txt: We can dynamically download it and parse it to check if the url is allowed to be crawled.
 
     try:
         parsed = urlparse(url)
