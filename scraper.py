@@ -21,6 +21,11 @@ def is_valid(url):
     # Decide whether to crawl this url or not. 
     # If you decide to crawl it, return True; otherwise return False.
     # There are already some conditions that return False.
+
+    # Ask TA: in the 4 given domains only?
+    # Ask for crawl permission? Check robots.txt?
+    # 
+
     try:
         parsed = urlparse(url)
         if parsed.scheme not in set(["http", "https"]):
@@ -38,3 +43,7 @@ def is_valid(url):
     except TypeError:
         print ("TypeError for ", parsed)
         raise
+
+# hoi TA: minh tu viet them o day ha?
+# kiem tra: ask for crawl permission
+# 
