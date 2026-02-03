@@ -1,9 +1,12 @@
 import re
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin, urldefrag
 import configparser
 import urllib.robotparser
+# NOTE(E): duplicate urllib.parse?
 import urllib.parse
 import logging
+# NOTE(E): install BeautifulSoup4
+from bs4 import BeautifulSoup
 
 
 CONFIG_PATH = "config.ini"
@@ -34,11 +37,15 @@ def extract_next_links(url, resp):
     # url: the URL that was used to get the page
     # resp.url: the actual url of the page
     # resp.status: the status code returned by the server. 200 is OK, you got the page. Other numbers mean that there was some kind of problem.
+    # 200: success; 204: no content; 301/302: redirect; 403: forbidden; 404: not found; 500: server error
     # resp.error: when status is not 200, you can check the error here, if needed.
+    # If the status codes are between 600 and 606, the reason for the error is provided in resp.error
     # resp.raw_response: this is where the page actually is. More specifically, the raw_response has two parts:
     #         resp.raw_response.url: the url, again
     #         resp.raw_response.content: the content of the page!
     # Return a list with the hyperlinks (as strings) scrapped from resp.raw_response.content
+
+    # NOTE: already check is_valid() in scraper?
     if not is_valid(url):
         return []
 
@@ -47,7 +54,7 @@ def extract_next_links(url, resp):
     if resp is None:
         logger.error(f"DROP no response, url: {url}")
 
-    if resp != 200:
+    if resp.status != 200:
         logger.warning(f"DROP status={resp.status} error={resp.error} url={url}")
 
     robots_url = get_robots_url(url)
@@ -58,7 +65,26 @@ def extract_next_links(url, resp):
         logger.warning(f"DROP no permission for url={url}, robots_txt={robots_url}")
         return []
 
-    # TODO: grab links in resp.raw_response.content
+    # TODO(TAN): grab links in resp.raw_response.content
+    try:
+        soup = BeautifulSoup(resp.raw_response.content, 'html.parser')
+        # TODO(TAN): save contents
+
+        # extract links
+        extracted_links = set() # no duplicates
+        for tag in soup.find_all('a', href=True):
+            link = urljoin(resp.url, tag['href'])
+            clean_link = urldefrag(link)[0]
+
+            # TODO(TAN): check for robots.txt Agents/Disallow here:
+            if robot_parser.can_fetch(USER_AGENT, clean_link):
+                extracted_links.add(clean_link)
+
+        return list(extracted_links)
+
+    except Exception as e:
+        logger.warning(f"Error parsing {url}: {e}")
+        return []
 
 
 def is_valid(url):
