@@ -2,7 +2,12 @@ import re
 from urllib.parse import urlparse
 import configparser
 import urllib.robotparser
+import urllib.parse
 import logging
+
+
+CONFIG_PATH = "config.ini"
+USER_AGENT = load_user_agent("Config.ini")
 
 
 # configure logging
@@ -34,12 +39,26 @@ def extract_next_links(url, resp):
     #         resp.raw_response.url: the url, again
     #         resp.raw_response.content: the content of the page!
     # Return a list with the hyperlinks (as strings) scrapped from resp.raw_response.content
+    if not is_valid(url):
+        return []
+
+    logger.info(f"START crawling URL: {url}")
 
     if resp is None:
-        logger.error(f"No response object for URL: {url}")
+        logger.error(f"DROP no response, url: {url}")
 
     if resp != 200:
-        logger.warning(f"URL: {url} unreachable, error: {resp.error}")
+        logger.warning(f"DROP status={resp.status} error={resp.error} url={url}")
+
+    robots_url = get_robots_url(url)
+    robot_parser = setup_robots(robots_url)
+    agents = load_user_agents(CONFIG_PATH)
+
+    if not robot_parser.can_fetch(USER_AGENT, url):
+        logger.warning(f"DROP no permission for url={url}, robots_txt={robots_url}")
+        return []
+
+    # TODO: grab links in resp.raw_response.content
 
 
 def is_valid(url):
@@ -65,19 +84,20 @@ def is_valid(url):
         print ("TypeError for ", parsed)
         raise
 
+def get_robots_url(url: str) -> str:
+    parsed = urlparse(url)
+    return f"{parsed.scheme}://{parsed.netloc}/robots.txt"
+
+def setup_robots(url):
+    robot_parser = urllib.robotparser.RobotFileParser()
+    robot_parser.set_url(url)
+    robot_parser.read()
+    return robot_parser
+
 
 #parse user agents from config.ini
 def load_user_agents(config_path: str) -> set[str]:
     config = configparser.ConfigParser()
     config.read(config_path)
-
-    raw_agents = config.get("robots", "user_agents", fallback="")
-
-    agents = {
-        line.strip().lower()
-        for line in raw_agents.splitlines()
-        if line.strip()
-    }
-
-    return agents
+    return config.get("DEFAULT", "USERAGENT").strip()
 
