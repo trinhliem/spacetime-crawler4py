@@ -1,9 +1,28 @@
 import re
 from urllib.parse import urlparse
+import configparser
+import urllib.robotparser
+import logging
+
+
+# configure logging
+logger = logging.getLogger(__name__)
+logging.basicConfig(filename='crawler.log', encoding='utf-8', level=logging.DEBUG)
+
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setLevel(logging.INFO)
+formatter = logging.Formatter(
+    "%(asctime)s | %(levelname)s | %(message)s"
+)
+console_handler.setFormatter(formatter)
+
+logger.addHandler(console_handler)
+
 
 def scraper(url, resp):
     links = extract_next_links(url, resp)
     return [link for link in links if is_valid(link)]
+
 
 def extract_next_links(url, resp):
     # Implementation required.
@@ -15,7 +34,13 @@ def extract_next_links(url, resp):
     #         resp.raw_response.url: the url, again
     #         resp.raw_response.content: the content of the page!
     # Return a list with the hyperlinks (as strings) scrapped from resp.raw_response.content
-    return list()
+
+    if resp is None:
+        logger.error(f"No response object for URL: {url}")
+
+    if resp != 200:
+        logger.warning(f"URL: {url} unreachable, error: {resp.error}")
+
 
 def is_valid(url):
     # Decide whether to crawl this url or not. 
@@ -39,3 +64,20 @@ def is_valid(url):
     except TypeError:
         print ("TypeError for ", parsed)
         raise
+
+
+#parse user agents from config.ini
+def load_user_agents(config_path: str) -> set[str]:
+    config = configparser.ConfigParser()
+    config.read(config_path)
+
+    raw_agents = config.get("robots", "user_agents", fallback="")
+
+    agents = {
+        line.strip().lower()
+        for line in raw_agents.splitlines()
+        if line.strip()
+    }
+
+    return agents
+
