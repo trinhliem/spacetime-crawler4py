@@ -16,7 +16,7 @@ def load_user_agents(config_path: str) -> set[str]:
     return config.get("DEFAULT", "USERAGENT").strip()
 
 CONFIG_PATH = "config.ini"
-USER_AGENT = load_user_agents("Config.ini")
+USER_AGENT = load_user_agents("config.ini")
 
 # configure logging
 logger = logging.getLogger(__name__)
@@ -78,13 +78,13 @@ def extract_next_links(url, resp):
         return []
 
     
-    # robots_url = get_robots_url(url)
-    # robot_parser = setup_robots(robots_url)
-    # agents = load_user_agents(CONFIG_PATH)
+    robots_url = get_robots_url(url)
+    robot_parser = setup_robots(robots_url)
+    agents = load_user_agents(CONFIG_PATH)
 
-    # if not robot_parser.can_fetch(USER_AGENT, url):
-    #     logger.warning(f"DROP no permission for url={url}, robots_txt={robots_url}")
-    #     return []
+    if not robot_parser.can_fetch(USER_AGENT, url):
+        logger.warning(f"DROP no permission for url={url}, robots_txt={robots_url}")
+        return []
 
     # TODO(TAN): grab links in resp.raw_response.content
     try:
@@ -99,8 +99,8 @@ def extract_next_links(url, resp):
             clean_link = avoid_duplicate_urls(clean_link) # additional duplicate handling
 
             # TODO(TAN): check for robots.txt Agents/Disallow here:
-            # if robot_parser.can_fetch(USER_AGENT, clean_link):
-            #     extracted_links.add(clean_link)
+            if robot_parser.can_fetch(USER_AGENT, clean_link):
+                extracted_links.add(clean_link)
 
         return list(extracted_links)
 
