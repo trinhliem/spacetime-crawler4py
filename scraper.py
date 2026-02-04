@@ -15,6 +15,9 @@ def load_user_agents(config_path: str) -> set[str]:
 CONFIG_PATH = "config.ini"
 USER_AGENT = load_user_agents("config.ini")
 MIN_WORDS = 100
+SIMHASH_BITS = 64         
+NEAR_DUP_TAU = 0.95     
+SEEN_SIMHASHES = []  
 
 # configure logging
 logger = logging.getLogger(__name__)
@@ -89,13 +92,12 @@ def extract_next_links(url, resp):
         soup = BeautifulSoup(content, 'html.parser')
         # TODO(TAN): save contents
 
-        # Detect and avoid pages with no information 
+        # Detect and avoid pages with low information 
         # Sources : https://stackoverflow.com/questions/30565404/remove-all-style-scripts-and-html-tags-from-an-html-page
         for tag in soup(["script", "style"]):
             tag.decompose()
         text = soup.get_text(separator=" ")
-        if not has_min_words(text):
-            logger.info(f"LOWINFO drop-links below {MIN_WORDS}) url={resp.url}")
+        if has_low_info(text, resp.url):
             return []
 
         # extract links
@@ -165,6 +167,22 @@ def setup_robots(url):
     return robot_parser
 
 
+def tokenize_text(text: str):
+    # allow non-English characters for this assignment
+    current = []
+    for ch in text:
+        if ch.isalnum():        
+            current.append(ch.lower())
+        else:
+            if current:
+                yield "".join(current)
+                current.clear()
+
+    if current:
+        yield "".join(current)
+        current.clear()
+
+
 def avoid_duplicate_urls(url: str) -> str:
     """
     Source : Google AI Overview was used to understand how to utilize urlsplit(),
@@ -195,25 +213,68 @@ def avoid_duplicate_urls(url: str) -> str:
     return urllib.parse.urlunsplit((scheme, network_location, path, query, ""))
 
 
+def has_low_info(text: str, url: str) -> bool:
+    if not has_min_words(text):
+        logger.info(f"LOWINFO reason=min_words, url={url}")
+        return True
 
-def tokenize_text_on_fly(text: str):
-    current = []
-    for ch in text:
-        if ch.isalnum():        
-            current.append(ch.lower())
-        else:
-            if current:
-                yield "".join(current)
-                current.clear()
+    if has_few_unique_tokens(text):
+        logger.info(f"LOWINFO reason=few_unique_tokens, url={url}")
+        return True
 
-    if current:
-        yield "".join(current)
-        current.clear()
+    if has_repeated_sentences(text, min_len=30, repeat_threshold=10):
+        logger.info(f"LOWINFO reason=repeated_sentences, url={url}")
+        return True
+
+    return False
+
 
 def has_min_words(text: str) -> bool:
     count = 0
-    for token in tokenize_text_on_fly(text):
+    for token in tokenize_text(text):
         count += 1
         if count >= MIN_WORDS:
             return True
     return False
+
+
+def has_few_unique_tokens(text: str) -> bool:
+    total = 0
+    unique_tokens = set()
+
+    for tok in tokenize_text(text):
+        total += 1
+        unique_tokens.add(tok)
+        if total >= 500:  # Check the first 500 tokens
+            break
+
+    if total == 0:
+        return True
+    unique_ratio = len(unique_tokens) / total
+    return unique_ratio < 0.05
+
+
+def has_repeated_sentences(text: str, min_len: int = 30, repeat_threshold: int = 10) -> bool:
+    sentences = re.split(r"[.!?]\s+|\n+", text)  # basic heuristic to detect a sentence
+
+    counts = {}
+    total = 0
+    for sentence in sentences:
+        sentence = sentence.strip().lower()
+        sentence = re.sub(r"\s+", " ", sentence)
+
+        if len(sentence) < min_len:
+            continue
+
+        total += 1 
+        counts[sentence] = counts.get(sentence, 0) + 1
+        if counts[sentence] >= repeat_threshold:
+            return True
+        
+        if total >= 300:
+            break
+
+    return False
+
+
+# TODO Shizuka -- EC Simhas
