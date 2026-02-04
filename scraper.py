@@ -2,10 +2,7 @@ import re
 from urllib.parse import urlparse, urljoin, urldefrag, urlsplit, parse_qsl, urlencode
 import configparser
 import urllib.robotparser
-# NOTE(E): duplicate urllib.parse?
-import urllib.parse
 import logging
-# NOTE(E): install BeautifulSoup4
 from bs4 import BeautifulSoup
 import sys
 
