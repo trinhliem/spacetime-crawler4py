@@ -13,7 +13,7 @@ import sys
 def load_user_agents(config_path: str) -> set[str]:
     config = configparser.ConfigParser()
     config.read(config_path)
-    return config.get("DEFAULT", "USERAGENT").strip()
+    return config.get("IDENTIFICATION", "USERAGENT").strip()
 
 CONFIG_PATH = "config.ini"
 USER_AGENT = load_user_agents("config.ini")
