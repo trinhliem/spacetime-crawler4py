@@ -14,6 +14,7 @@ def load_user_agents(config_path: str) -> set[str]:
 
 CONFIG_PATH = "config.ini"
 USER_AGENT = load_user_agents("config.ini")
+MIN_WORDS = 100
 
 # configure logging
 logger = logging.getLogger(__name__)
@@ -87,6 +88,15 @@ def extract_next_links(url, resp):
     try:
         soup = BeautifulSoup(content, 'html.parser')
         # TODO(TAN): save contents
+
+        # Detect and avoid pages with no information 
+        # Sources : https://stackoverflow.com/questions/30565404/remove-all-style-scripts-and-html-tags-from-an-html-page
+        for tag in soup(["script", "style"]):
+            tag.decompose()
+        text = soup.get_text(separator=" ")
+        if not has_min_words(text):
+            logger.info(f"LOWINFO drop-links below {MIN_WORDS}) url={resp.url}")
+            return []
 
         # extract links
         extracted_links = set() # no duplicates
@@ -182,11 +192,28 @@ def avoid_duplicate_urls(url: str) -> str:
         query = urlencode(params)
         logger.debug(f"cleaned query: {query}")
     
-    # 4. Trailing /
-    # Possible cases: /, /about, /about/
-    if path in ("", "/"):
-        path = "/"         
-    else:
-        path = path.rstrip("/")  
-    
     return urllib.parse.urlunsplit((scheme, network_location, path, query, ""))
+
+
+
+def tokenize_text_on_fly(text: str):
+    current = []
+    for ch in text:
+        if ch.isalnum():        
+            current.append(ch.lower())
+        else:
+            if current:
+                yield "".join(current)
+                current.clear()
+
+    if current:
+        yield "".join(current)
+        current.clear()
+
+def has_min_words(text: str) -> bool:
+    count = 0
+    for token in tokenize_text_on_fly(text):
+        count += 1
+        if count >= MIN_WORDS:
+            return True
+    return False
