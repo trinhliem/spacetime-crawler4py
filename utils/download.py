@@ -1,5 +1,5 @@
 import requests
-import cbor
+import cbor # packaging format for data sent 
 import time
 
 from utils.response import Response

@@ -11,7 +11,7 @@ class Frontier(object):
     def __init__(self, config, restart):
         self.logger = get_logger("FRONTIER")
         self.config = config
-        self.to_be_downloaded = list()
+        self.to_be_downloaded = list() # initialize the todo list of URLs
         
         if not os.path.exists(self.config.save_file) and not restart:
             # Save file does not exist, but request to load save.
@@ -27,21 +27,21 @@ class Frontier(object):
         self.save = shelve.open(self.config.save_file)
         if restart:
             for url in self.config.seed_urls:
-                self.add_url(url)
+                self.add_url(url) # if restarting, add each seed to the frontier
         else:
             # Set the frontier state with contents of save file.
             self._parse_save_file()
-            if not self.save:
+            if not self.save: # If the save is empty, fall back to seeding
                 for url in self.config.seed_urls:
                     self.add_url(url)
 
     def _parse_save_file(self):
         ''' This function can be overridden for alternate saving techniques. '''
-        total_count = len(self.save)
-        tbd_count = 0
+        total_count = len(self.save) # how many URLs hav been discovered 
+        tbd_count = 0 # how many are still pending 
         for url, completed in self.save.values():
             if not completed and is_valid(url):
-                self.to_be_downloaded.append(url)
+                self.to_be_downloaded.append(url) # add to todolist
                 tbd_count += 1
         self.logger.info(
             f"Found {tbd_count} urls to be downloaded from {total_count} "
@@ -49,17 +49,17 @@ class Frontier(object):
 
     def get_tbd_url(self):
         try:
-            return self.to_be_downloaded.pop()
+            return self.to_be_downloaded.pop() # frontier uses stack; if empty, return None; Workers stop when None is returned
         except IndexError:
             return None
 
     def add_url(self, url):
-        url = normalize(url)
-        urlhash = get_urlhash(url)
+        url = normalize(url) # normalize so same page doesn't appear in multiple forms
+        urlhash = get_urlhash(url) # compute hash key for storage
         if urlhash not in self.save:
-            self.save[urlhash] = (url, False)
-            self.save.sync()
-            self.to_be_downloaded.append(url)
+            self.save[urlhash] = (url, False) # store hash key as not completed yet
+            self.save.sync() # flush to disk immediately
+            self.to_be_downloaded.append(url) # add to todo list for Workers
     
     def mark_url_complete(self, url):
         urlhash = get_urlhash(url)
@@ -68,5 +68,5 @@ class Frontier(object):
             self.logger.error(
                 f"Completed url {url}, but have not seen it before.")
 
-        self.save[urlhash] = (url, True)
-        self.save.sync()
+        self.save[urlhash] = (url, True) # update status to completed
+        self.save.sync() # flush to disk
