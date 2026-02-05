@@ -59,7 +59,7 @@ def extract_next_links(url, resp):
         return []
     
     # If the server did not return 200 (OK), skip parsing links from it since it may be unreliable for extraction
-    if resp.status != 200:
+    if resp.status != 200: #Comment (Quang): This one can miss the redirect links with code 301/302 which may lead to other valid pages. The code in other files already handle the redirect links correctly for us.
         logger.warning(f"DROP status={resp.status} error={resp.error} url={url}")
         return []
     
@@ -77,7 +77,7 @@ def extract_next_links(url, resp):
     
     robots_url = get_robots_url(url)
     robot_parser = setup_robots(robots_url)
-    agents = load_user_agents(CONFIG_PATH)
+    agents = load_user_agents(CONFIG_PATH) #Comment (Quang): Can we remove this variable if we don't use it?
 
     if not robot_parser.can_fetch(USER_AGENT, url):
         logger.warning(f"DROP no permission for url={url}, robots_txt={robots_url}")
@@ -148,6 +148,31 @@ def is_valid(url):
             + r"|epub|dll|cnf|tgz|sha1"
             + r"|thmx|mso|arff|rtf|jar|csv"
             + r"|rm|smil|wmv|swf|wma|zip|rar|gz)$", parsed.path.lower())
+    
+        # --- TRAP DETECTIONS ---
+        #Reference: https://developers.google.com/search/docs/crawling-indexing/url-structure, https://support.archive-it.org/hc/en-us/articles/208332943-How-to-identify-and-avoid-crawler-traps, https://en.wikipedia.org/wiki/Spider_trap
+        #1. Avoid infinite calendar trap: for example, URLs with /calendar/2024/01/01, /calendar/2024/01/01, etc.
+        calendar_pattern = re.compile(r"/calendar/\d{4}/\d{1,2}/\d{1,2}")
+        if calendar_pattern.search(parsed.path.lower()):
+            logger.info(f"DROPPED infinite calendar URL: {url}")
+            return False
+        
+        #2. Avoid session IDs in query session=, sid=, jseesionid=
+        if parsed.query:
+            query_params = dict(parse_qsl(parsed.query))
+            session_keys = {"session", "sid", "jsessionid"}
+            if any(key.lower() in session_keys for key in query_params):
+                logger.info(f"DROPPED session ID URL: {url}")
+                return False
+            
+        #3. Avoid spider traps / manual patterns
+        #Example: very long numeric path segments (common traps)
+        segments = [seg for seg in parsed.path.split("/") if seg]
+        if any(len(seg) > 50 for seg in segments):
+            logger.info(f"DROPPED suspicious long segment URL: {url}")
+            return False
+        
+        return True
 
     except TypeError:
         print ("TypeError for ", parsed)
@@ -179,7 +204,7 @@ def tokenize_text(text: str):
         yield "".join(current)
         current.clear()
 
-
+#Comment Quang: we may want to normalize the domain too, e.g., lowercase hostnames such as Example.COM and example.com are the same.
 def avoid_duplicate_urls(url: str) -> str:
     """
     Source : Google AI Overview was used to understand how to utilize urlsplit(),
@@ -191,7 +216,7 @@ def avoid_duplicate_urls(url: str) -> str:
     2. Relative cs Absolute path -> resolved using join()
     3. Query parameter order
     TODO continue thinking of other edge cases
-
+    
     """
     url_components = urlsplit(url)
     scheme = url_components.scheme
