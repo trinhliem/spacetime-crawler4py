@@ -51,10 +51,6 @@ def extract_next_links(url, resp):
     #         resp.raw_response.content: the content of the page!
     # Return a list with the hyperlinks (as strings) scrapped from resp.raw_response.content
 
-    # NOTE: already check is_valid() in scraper? I think so (Shizuka)
-    # if not is_valid(url):
-    #     return []
-
     logger.info(f"START crawling URL: {url}")
 
     # If the downloader gave no response object
@@ -101,7 +97,7 @@ def extract_next_links(url, resp):
             return []
 
         # extract links
-        extracted_links = set() # no duplicates
+        extracted_links = set()
         for tag in soup.find_all('a', href=True):
             link = urljoin(resp.url, tag['href']) # duplicate handling  : ensure absolute path
             clean_link = urldefrag(link)[0] # duplicate handling : avoid fragments
