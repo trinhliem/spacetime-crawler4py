@@ -7,7 +7,7 @@ from bs4 import BeautifulSoup
 import sys
 
 #parse user agents from config.ini
-def load_user_agents(config_path: str) -> set[str]:
+def load_user_agents(config_path: str):
     config = configparser.ConfigParser()
     config.read(config_path)
     return config.get("IDENTIFICATION", "USERAGENT").strip()
@@ -85,10 +85,11 @@ def extract_next_links(url, resp):
 
     # TODO(TAN): grab links in resp.raw_response.content
     try:
+        logger.info(f"Begin analyzing content url={url}")
         soup = BeautifulSoup(content, 'html.parser')
         # TODO(TAN): save contents
 
-        # Detect and avoid pages with low information 
+        # Detect and avoid pages with low information
         # Sources : https://stackoverflow.com/questions/30565404/remove-all-style-scripts-and-html-tags-from-an-html-page
         for tag in soup(["script", "style"]):
             tag.decompose()
