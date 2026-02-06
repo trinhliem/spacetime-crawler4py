@@ -74,15 +74,6 @@ def extract_next_links(url, resp):
         logger.error(f"DROP no content, url: {url}")
         return []
 
-    
-    robots_url = get_robots_url(url)
-    robot_parser = setup_robots(robots_url)
-    agents = load_user_agents(CONFIG_PATH) #Comment (Quang): Can we remove this variable if we don't use it?
-
-    if not robot_parser.can_fetch(USER_AGENT, url):
-        logger.warning(f"DROP no permission for url={url}, robots_txt={robots_url}")
-        return []
-
     # TODO(TAN): grab links in resp.raw_response.content
     try:
         logger.info(f"Begin analyzing content url={url}")
@@ -299,4 +290,5 @@ def has_repeated_sentences(text: str, min_len: int = 30, repeat_threshold: int =
     return False
 
 
-# TODO Shizuka -- EC Simhas
+
+# TODO Shizuka -- EC Simhash
