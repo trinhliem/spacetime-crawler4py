@@ -1,5 +1,5 @@
 import re
-from urllib.parse import urlparse, urljoin, urldefrag, urlsplit, parse_qsl, urlencode
+from urllib.parse import urlparse, urljoin, urldefrag, urlsplit, parse_qsl, urlencode, urlunsplit
 import configparser
 import logging
 from bs4 import BeautifulSoup
@@ -8,18 +8,21 @@ import os
 import hashlib
 import csv
 
-#parse user agents from config.ini
-def load_user_agents(config_path: str):
-    config = configparser.ConfigParser()
-    config.read(config_path)
-    return config.get("IDENTIFICATION", "USERAGENT").strip()
+# #parse user agents from config.ini
+# def load_user_agents(config_path: str):
+#     config = configparser.ConfigParser()
+#     config.read(config_path)
+#     return config.get("IDENTIFICATION", "USERAGENT").strip()
 
-CONFIG_PATH = "config.ini"
-USER_AGENT = load_user_agents("config.ini")
+# CONFIG_PATH = "config.ini"
+# USER_AGENT = load_user_agents("config.ini")
+
+
 MIN_WORDS = 100
-SIMHASH_BITS = 64         
-NEAR_DUP_TAU = 0.95     
-SEEN_SIMHASHES = []  
+REPORT_DIR = "report"
+UNIQUE_PAGES = set()
+LONGEST_PAGE_URL = ""
+LONGEST_PAGE_WORDS = 0
 
 # configure logging
 logger = logging.getLogger(__name__)
@@ -31,8 +34,6 @@ formatter = logging.Formatter(
 )
 console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
-
-
 
 
 def scraper(url, resp):
@@ -94,29 +95,47 @@ def extract_next_links(url, resp):
         logger.error(f"DROP no content, url: {url}")
         return []
 
+    if is_large_file(resp):
+        logger.info(f"DROP large_file url={url}")
+        return []
+    
     # grab links in resp.raw_response.content
     try:
         logger.info(f"Begin analyzing content url={url}")
         soup = BeautifulSoup(content, 'html.parser')
 
-        # Detect and avoid pages with low information
         # Sources : https://stackoverflow.com/questions/30565404/remove-all-style-scripts-and-html-tags-from-an-html-page
         for tag in soup(["script", "style"]):
             tag.decompose()
-        text = soup.get_text(separator=" ")
-        if has_low_info(text, resp.url):
+        text = soup.get_text(separator=" ").strip()
+
+        if no_data_wrapper(resp, text):
             return []
-        #else:
-            #save_page_content(resp.url, text) # save the text content
+        #
+        if low_info_wrapper(text, url):
+            return []
+
+        # #save_page_content(resp.url, text) # save the text content
+        page_url = unique_url_key(resp.url)
+        if is_valid(page_url):
+            UNIQUE_PAGES.add(page_url)
+
+        wc = count_words(text)
+        if wc > LONGEST_PAGE_WORDS:
+            LONGEST_PAGE_WORDS = wc
+            LONGEST_PAGE_URL = page_url
 
         # extract links
         extracted_links = set()
         for tag in soup.find_all('a', href=True):
-            link = urljoin(resp.url, tag['href']) # duplicate handling  : ensure absolute path
-            clean_link = urldefrag(link)[0] # duplicate handling : avoid fragments
-            clean_link = avoid_duplicate_urls(clean_link) # additional duplicate handling
+            link = urljoin(resp.url, tag['href']) 
+            clean_link = urldefrag(link)[0]
+            clean_link = similar_no_info(clean_link) 
 
             extracted_links.add(clean_link)
+
+        write_unique_pages_report()
+        write_longest_page_report()
             
         return list(extracted_links)
 
@@ -149,7 +168,7 @@ def is_valid(url):
         ):
             return False
         
-        return not re.match(
+        if re.match(
             r".*\.(css|js|bmp|gif|jpe?g|ico"
             + r"|png|tiff?|mid|mp2|mp3|mp4"
             + r"|wav|avi|mov|mpeg|ram|m4v|mkv|ogg|ogv|pdf"
@@ -157,7 +176,8 @@ def is_valid(url):
             + r"|data|dat|exe|bz2|tar|msi|bin|7z|psd|dmg|iso"
             + r"|epub|dll|cnf|tgz|sha1"
             + r"|thmx|mso|arff|rtf|jar|csv"
-            + r"|rm|smil|wmv|swf|wma|zip|rar|gz)$", parsed.path.lower())
+            + r"|rm|smil|wmv|swf|wma|zip|rar|gz)$", parsed.path.lower()):
+            return False
     
         # --- TRAP DETECTIONS ---
         #Reference: https://developers.google.com/search/docs/crawling-indexing/url-structure, https://support.archive-it.org/hc/en-us/articles/208332943-How-to-identify-and-avoid-crawler-traps, https://en.wikipedia.org/wiki/Spider_trap
@@ -204,8 +224,9 @@ def tokenize_text(text: str):
         yield "".join(current)
         current.clear()
 
-#Comment Quang: we may want to normalize the domain too, e.g., lowercase hostnames such as Example.COM and example.com are the same.
-def avoid_duplicate_urls(url: str) -> str:
+
+# --- Handling similar pages with no information --- 
+def similar_no_info(url: str) -> str:
     """
     Source : Google AI Overview was used to understand how to utilize urlsplit(),
     parse_qsl
@@ -215,12 +236,10 @@ def avoid_duplicate_urls(url: str) -> str:
     1. Different fragments -> resolved using urldefrag()
     2. Relative cs Absolute path -> resolved using join()
     3. Query parameter order
-    TODO continue thinking of other edge cases
-    
     """
     url_components = urlsplit(url)
     scheme = url_components.scheme
-    network_location = url_components.netloc
+    network_location = url_components.netloc.lower()
     path = url_components.path if url_components.path else "/" # if path is empty, path is a /
     query = url_components.query
 
@@ -232,15 +251,16 @@ def avoid_duplicate_urls(url: str) -> str:
         query = urlencode(params)
         logger.debug(f"cleaned query: {query}")
     
-    return urllib.parse.urlunsplit((scheme, network_location, path, query, ""))
+    return urlunsplit((scheme, network_location, path, query, ""))
 
 
-def has_low_info(text: str, url: str) -> bool:
+# --- Handling pages with thin content/junk --- 
+def low_info_wrapper(text: str, url: str) -> bool:
     if not has_min_words(text):
         logger.info(f"LOWINFO reason=min_words, url={url}")
         return True
 
-    if has_few_unique_tokens(text):
+    if has_repeated_tokens(text):
         logger.info(f"LOWINFO reason=few_unique_tokens, url={url}")
         return True
 
@@ -260,7 +280,10 @@ def has_min_words(text: str) -> bool:
     return False
 
 
-def has_few_unique_tokens(text: str) -> bool:
+def has_repeated_tokens(text: str) -> bool:
+    """
+    Handle pages that lacks diveristy in words, which may be junk
+    """
     total = 0
     unique_tokens = set()
 
@@ -276,7 +299,10 @@ def has_few_unique_tokens(text: str) -> bool:
     return unique_ratio < 0.05
 
 
-def has_repeated_sentences(text: str, min_len: int = 30, repeat_threshold: int = 10) -> bool:
+def has_repeated_sentences(text: str) -> bool:
+    """
+    Handling pages with many repetitions, which may be junk
+    """
     sentences = re.split(r"[.!?]\s+|\n+", text)  # basic heuristic to detect a sentence
 
     counts = {}
@@ -285,12 +311,12 @@ def has_repeated_sentences(text: str, min_len: int = 30, repeat_threshold: int =
         sentence = sentence.strip().lower()
         sentence = re.sub(r"\s+", " ", sentence)
 
-        if len(sentence) < min_len:
+        if len(sentence) < 30:
             continue
 
         total += 1 
         counts[sentence] = counts.get(sentence, 0) + 1
-        if counts[sentence] >= repeat_threshold:
+        if counts[sentence] >= 10:
             return True
         
         if total >= 300:
@@ -299,5 +325,77 @@ def has_repeated_sentences(text: str, min_len: int = 30, repeat_threshold: int =
     return False
 
 
+# --- Handling 200, but no data ---
+def no_data_wrapper(response, text: str) -> bool:
+    '''
+    Wrapper for 200, but no data.
+    '''
 
-# TODO Shizuka -- EC Simhash
+    if not is_html_content_type(response):
+        logger.info(f"DROP 200_no_data reason=non_html url={response.url}")
+        return True
+
+    return False
+
+
+def is_html_content_type(response) -> bool:
+    """ 
+    Return true if the content is HTML (or text)
+    i.e. If it is not text data, but instead is pdf or image, then don't crawl
+    """
+    try:
+        headers = response.raw_response.headers 
+        content_type = (headers.get("Content-Type") or "").lower()  
+    except (AttributeError, TypeError):
+        return True
+
+    if content_type and ("text/html" not in content_type) and ("application/xhtml+xml" not in content_type): # content can be html even if the content_type is empty
+        return False 
+
+    return True
+
+
+# --- Handling Large files, Low info --- 
+def is_large_file(resp) -> bool:
+    try:
+        headers = resp.raw_response.headers
+        content_length = headers.get("Content-Length")
+        if content_length and content_length.isdigit():
+            size_bytes = int(content_length)
+
+            if size_bytes > 5_000_000: # 5MB
+                return True
+    except Exception:
+        pass
+    return False
+
+
+
+# TODO Shizuka -- EC Simhas
+
+
+# --- Report ---
+def unique_url_key(u: str) -> str:
+    return urldefrag(u)[0]
+
+def write_unique_pages_report() -> None:
+    os.makedirs(REPORT_DIR, exist_ok=True)
+    out_path = os.path.join(REPORT_DIR, "unique_pages.txt")
+    with open(out_path, "w") as f:
+        f.write(f"Unique pages: {len(UNIQUE_PAGES)}\n")
+        f.write("\n")
+        for u in sorted(UNIQUE_PAGES):
+            f.write(u + "\n")
+
+def count_words(text: str) -> int:
+    num_words = 0
+    for _ in tokenize_text(text):
+        num_words += 1
+    return num_words
+
+def write_longest_page_report() -> None:
+    os.makedirs(REPORT_DIR, exist_ok=True)
+    out_path = os.path.join(REPORT_DIR, "longest_page.txt")
+    with open(out_path, "w") as f:
+        f.write(f"Longest page (num of words): {LONGEST_PAGE_WORDS}\n")
+        f.write(f"URL: {LONGEST_PAGE_URL}\n")
