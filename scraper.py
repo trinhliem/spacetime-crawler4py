@@ -1,10 +1,12 @@
 import re
 from urllib.parse import urlparse, urljoin, urldefrag, urlsplit, parse_qsl, urlencode
 import configparser
-import urllib.robotparser
 import logging
 from bs4 import BeautifulSoup
 import sys
+import os
+import hashlib
+import csv
 
 #parse user agents from config.ini
 def load_user_agents(config_path: str):
@@ -74,11 +76,10 @@ def extract_next_links(url, resp):
         logger.error(f"DROP no content, url: {url}")
         return []
 
-    # TODO(TAN): grab links in resp.raw_response.content
+    # grab links in resp.raw_response.content
     try:
         logger.info(f"Begin analyzing content url={url}")
         soup = BeautifulSoup(content, 'html.parser')
-        # TODO(TAN): save contents
 
         # Detect and avoid pages with low information
         # Sources : https://stackoverflow.com/questions/30565404/remove-all-style-scripts-and-html-tags-from-an-html-page
@@ -87,6 +88,8 @@ def extract_next_links(url, resp):
         text = soup.get_text(separator=" ")
         if has_low_info(text, resp.url):
             return []
+        else:
+            save_page_content(resp.url, text) # save the text content
 
         # extract links
         extracted_links = set()
@@ -95,10 +98,8 @@ def extract_next_links(url, resp):
             clean_link = urldefrag(link)[0] # duplicate handling : avoid fragments
             clean_link = avoid_duplicate_urls(clean_link) # additional duplicate handling
 
-            # TODO(TAN): check for robots.txt Agents/Disallow here:
-            if robot_parser.can_fetch(USER_AGENT, clean_link):
-                extracted_links.add(clean_link)
-
+            extracted_links.add(clean_link)
+            
         return list(extracted_links)
 
     except Exception as e:
@@ -168,16 +169,6 @@ def is_valid(url):
     except TypeError:
         print ("TypeError for ", parsed)
         raise
-
-def get_robots_url(url: str) -> str:
-    parsed = urlparse(url)
-    return f"{parsed.scheme}://{parsed.netloc}/robots.txt"
-
-def setup_robots(url):
-    robot_parser = urllib.robotparser.RobotFileParser()
-    robot_parser.set_url(url)
-    robot_parser.read()
-    return robot_parser
 
 
 def tokenize_text(text: str):
