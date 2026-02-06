@@ -55,10 +55,28 @@ def extract_next_links(url, resp):
 
     logger.info(f"START crawling URL: {url}")
 
+    # Handle server status codes and redirects
+    CACHE_SERVER_ERRORS = {600, 601, 602, 603, 604, 605, 606, 607, 608}
+
     # If the downloader gave no response object
     if resp is None:
         logger.error(f"DROP no response, url: {url}")
         return []
+    
+    # If it's a cache server error, log and drop completely since these are likely transient and not useful for extraction
+    if resp.status in CACHE_SERVER_ERRORS:
+        logger.info(f"DROPPED {url} due to cache server error={resp.status}")
+        return None
+    
+    # If it's a redirect (301/302), log and return the redirect URL for crawling since these can lead to valid pages. The crawler will handle the redirect URL as a new crawl.
+    if resp.status in {301, 302}:
+        redirect_url = resp.headers.get("Location")
+        if redirect_url:
+            logger.info(f"REDIRECT {url} TO {redirect_url}")
+            return [redirect_url] # return the redirect URL for crawler to handle as a new crawl
+        else:
+            logger.warning(f"DROPPED {url}: redirect without location header")
+            return []      
     
     # If the server did not return 200 (OK), skip parsing links from it since it may be unreliable for extraction
     if resp.status != 200: #Comment (Quang): This one can miss the redirect links with code 301/302 which may lead to other valid pages. The code in other files already handle the redirect links correctly for us.
@@ -88,8 +106,8 @@ def extract_next_links(url, resp):
         text = soup.get_text(separator=" ")
         if has_low_info(text, resp.url):
             return []
-        else:
-            save_page_content(resp.url, text) # save the text content
+        #else:
+            #save_page_content(resp.url, text) # save the text content
 
         # extract links
         extracted_links = set()
