@@ -452,6 +452,8 @@ def update_word_frequencies(text: str) -> None:
     for token in tokenize_text(text):
         if token.isalnum() and len(token) <= 1:     # remove one letter, still include digit     
             continue
+        if token.isdigit():
+            continue
         if token in STOPWORDS:
             continue
         WORD_FREQ[token] = WORD_FREQ.get(token, 0) + 1
