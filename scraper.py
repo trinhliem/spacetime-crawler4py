@@ -46,7 +46,6 @@ SUBDOMAIN_COUNTS: dict[str, int] = {}
 
 # configure logging
 logger = logging.getLogger(__name__)
-logging.basicConfig(filename='crawler.log', encoding='utf-8', level=logging.DEBUG)
 console_handler = logging.StreamHandler(sys.stdout)
 console_handler.setLevel(logging.INFO)
 formatter = logging.Formatter(
@@ -73,7 +72,7 @@ def extract_next_links(url, resp):
     #         resp.raw_response.url: the url, again
     #         resp.raw_response.content: the content of the page!
     # Return a list with the hyperlinks (as strings) scrapped from resp.raw_response.content
-
+    global LONGEST_PAGE_WORDS, LONGEST_PAGE_URL
     logger.info(f"START crawling URL: {url}")
 
     # Handle server status codes and redirects
@@ -144,7 +143,6 @@ def extract_next_links(url, resp):
         update_subdomain_counts(resp.url, SUBDOMAIN_COUNTS)
 
         wc = count_words(text)
-        global LONGEST_PAGE_WORDS, LONGEST_PAGE_URL
         if wc > LONGEST_PAGE_WORDS:
             LONGEST_PAGE_WORDS = wc
             LONGEST_PAGE_URL = page_url
@@ -178,6 +176,10 @@ def is_valid(url):
     try:
         parsed = urlparse(url)
         if parsed.scheme not in set(["http", "https"]):
+            return False
+
+        path = parsed.path.lower()
+        if any(key in path for key in ["/auth/", "/signin", "/login", "/logout", "/oauth"]): # filter authentication related urls
             return False
         
         # host must be in allowed domain set
@@ -283,11 +285,11 @@ def similar_no_info(url: str) -> str:
 # --- Handling pages with thin content/junk --- 
 def low_info_wrapper(text: str, url: str) -> bool:
     if not has_min_words(text):
-        logger.info(f"LOWINFO reason=min_words, url={url}")
+        logger.info(f"DROPPED reason=min_words, url={url}")
         return True
 
     if has_repeated_tokens(text):
-        logger.info(f"LOWINFO reason=few_unique_tokens, url={url}")
+        logger.info(f"DROPPED reason=few_unique_tokens, url={url}")
         return True
 
     # if has_repeated_sentences(text, min_len=30, repeat_threshold=10):
@@ -358,7 +360,7 @@ def no_data_wrapper(response, text: str) -> bool:
     '''
 
     if not is_html_content_type(response):
-        logger.info(f"DROP 200_no_data reason=non_html url={response.url}")
+        logger.info(f"DROPPED 200_no_data reason=non_html url={response.url}")
         return True
 
     return False
@@ -446,24 +448,18 @@ def write_longest_page_report() -> None:
         f.write(f"URL: {LONGEST_PAGE_URL}\n")
 
 
-def load_stopwords_file(stopwords_path: str) -> set[str]:
-    words = set()
-    with open(stopwords_path, "r", encoding="utf-8") as f:
-        for line in f:
-            w = line.strip().lower()
-            if w:
-                words.add(w)
-    return words
-
-
 def update_word_frequencies(text: str) -> None:
     for token in tokenize_text(text):
+        if token.isalnum() and len(token) <= 1:     # remove one letter, still include digit     
+            continue
         if token in STOPWORDS:
             continue
         WORD_FREQ[token] = WORD_FREQ.get(token, 0) + 1
 
 
 def write_top_50_words(out_path: str) -> None:
+    os.makedirs(REPORT_DIR, exist_ok=True)
+    out_path = os.path.join(REPORT_DIR, "common_words.txt")
     items = sorted(WORD_FREQ.items(), key=lambda kv: (-kv[1], kv[0]))[:50]
     with open(out_path, "w", encoding="utf-8") as f:
         for word, count in items:
@@ -479,6 +475,8 @@ def update_subdomain_counts(url: str, subdomain_counts: dict[str, int]) -> None:
 
 
 def write_subdomains_report(subdomain_counts: dict[str, int], out_path: str) -> None:
+    os.makedirs(REPORT_DIR, exist_ok=True)
+    out_path = os.path.join(REPORT_DIR, "subdomains.txt")
     with open(out_path, "w", encoding="utf-8") as f:
         for host in sorted(subdomain_counts.keys()):
             f.write(f"{host}, {subdomain_counts[host]}\n")
