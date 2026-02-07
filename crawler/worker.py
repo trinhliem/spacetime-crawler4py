@@ -31,6 +31,7 @@ class Worker(Thread):
             if not resp:
                 self.logger.info(f"Failed to download {tbd_url} using cache {self.config.cache_server}.")
                 self.frontier.mark_url_complete(tbd_url) # mark as complete to avoid retrying indefinitely
+                self.frontier.close_if_done()
                 continue
 
             self.logger.info(
@@ -41,4 +42,4 @@ class Worker(Thread):
                 self.frontier.add_url(scraped_url)
 
             self.frontier.mark_url_complete(tbd_url)
-            #time.sleep(self.config.time_delay)
+            self.frontier.close_if_done()
