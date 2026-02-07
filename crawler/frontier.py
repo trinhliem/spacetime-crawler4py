@@ -3,6 +3,7 @@ import shelve
 
 from threading import Thread, Lock
 from queue import Queue, Empty
+from time import sleep
 
 from utils import get_logger, get_urlhash, normalize
 from scraper import is_valid
@@ -50,7 +51,7 @@ class Frontier(object):
 
         for url, completed in self.save.values():
             if not completed and is_valid(url):
-                self.to_be_downloaded.append(url) # add to todolist
+                self.to_be_downloaded.put(url) # add to todolist
                 tbd_count += 1
 
         self.logger.info(
@@ -71,7 +72,9 @@ class Frontier(object):
             if urlhash not in self.save:
                 self.save[urlhash] = (url, False) # store hash key as not completed yet
                 self.save.sync() # flush to disk immediately
-                self.to_be_downloaded.put(url) # add to frontier for workers to crawl
+                
+        #queue is thread-safe
+        self.to_be_downloaded.put(url) # add to frontier for workers to crawl
     
     def mark_url_complete(self, url):
         urlhash = get_urlhash(url)
