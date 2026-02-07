@@ -23,6 +23,9 @@ REPORT_DIR = "report"
 UNIQUE_PAGES = set()
 LONGEST_PAGE_URL = ""
 LONGEST_PAGE_WORDS = 0
+WORD_FREQ: dict[str, int] = {}
+STOPWORDS = set()
+SUBDOMAIN_COUNTS = 0
 
 # configure logging
 logger = logging.getLogger(__name__)
@@ -116,9 +119,11 @@ def extract_next_links(url, resp):
             return []
 
         # #save_page_content(resp.url, text) # save the text content
+        update_word_frequencies(text)
         page_url = unique_url_key(resp.url)
         if is_valid(page_url):
             UNIQUE_PAGES.add(page_url)
+        update_subdomain_counts(url, SUBDOMAIN_COUNTS)
 
         wc = count_words(text)
         if wc > LONGEST_PAGE_WORDS:
@@ -136,6 +141,8 @@ def extract_next_links(url, resp):
 
         write_unique_pages_report()
         write_longest_page_report()
+        write_top_50_words("common_words.txt")
+        write_subdomains_report(SUBDOMAIN_COUNTS, "subdomains.txt")
             
         return list(extracted_links)
 
@@ -378,6 +385,7 @@ def is_large_file(resp) -> bool:
 def unique_url_key(u: str) -> str:
     return urldefrag(u)[0]
 
+
 def write_unique_pages_report() -> None:
     os.makedirs(REPORT_DIR, exist_ok=True)
     out_path = os.path.join(REPORT_DIR, "unique_pages.txt")
@@ -387,11 +395,13 @@ def write_unique_pages_report() -> None:
         for u in sorted(UNIQUE_PAGES):
             f.write(u + "\n")
 
+
 def count_words(text: str) -> int:
     num_words = 0
     for _ in tokenize_text(text):
         num_words += 1
     return num_words
+
 
 def write_longest_page_report() -> None:
     os.makedirs(REPORT_DIR, exist_ok=True)
@@ -399,3 +409,41 @@ def write_longest_page_report() -> None:
     with open(out_path, "w") as f:
         f.write(f"Longest page (num of words): {LONGEST_PAGE_WORDS}\n")
         f.write(f"URL: {LONGEST_PAGE_URL}\n")
+
+
+def load_stopwords_file(stopwords_path: str) -> set[str]:
+    words = set()
+    with open(stopwords_path, "r", encoding="utf-8") as f:
+        for line in f:
+            w = line.strip().lower()
+            if w:
+                words.add(w)
+    return words
+
+
+def update_word_frequencies(text: str) -> None:
+    for token in tokenize_text(text):
+        if token in STOPWORDS:
+            continue
+        WORD_FREQ[token] = WORD_FREQ.get(token, 0) + 1
+
+
+def write_top_50_words(out_path: str) -> None:
+    items = sorted(WORD_FREQ.items(), key=lambda kv: (-kv[1], kv[0]))[:50]
+    with open(out_path, "w", encoding="utf-8") as f:
+        for word, count in items:
+            f.write(f"{word}, {count}\n")
+
+
+def update_subdomain_counts(url: str, subdomain_counts: dict[str, int]) -> None:
+    clean_url = urldefrag(url)[0]
+    host = (urlparse(clean_url).hostname or "").lower()
+    if not host:
+        return
+    subdomain_counts[host] = subdomain_counts.get(host, 0) + 1
+
+
+def write_subdomains_report(subdomain_counts: dict[str, int], out_path: str) -> None:
+    with open(out_path, "w", encoding="utf-8") as f:
+        for host in sorted(subdomain_counts.keys()):
+            f.write(f"{host}, {subdomain_counts[host]}\n")
