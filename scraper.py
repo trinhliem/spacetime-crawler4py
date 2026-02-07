@@ -42,8 +42,7 @@ STOPWORDS = {
     "why","why's","with","won't","would","wouldn't","you","you'd","you'll","you're","you've",
     "your","yours","yourself","yourselves"
 }
-
-SUBDOMAIN_COUNTS = 0
+SUBDOMAIN_COUNTS: dict[str, int] = {}
 
 # configure logging
 logger = logging.getLogger(__name__)
@@ -88,7 +87,7 @@ def extract_next_links(url, resp):
     # If it's a cache server error, log and drop completely since these are likely transient and not useful for extraction
     if resp.status in CACHE_SERVER_ERRORS:
         logger.info(f"DROPPED {url} due to cache server error={resp.status}")
-        return None
+        return []
     
     # If it's a redirect (301/302), log and return the redirect URL for crawling since these can lead to valid pages. The crawler will handle the redirect URL as a new crawl.
     if resp.status in {301, 302}:
@@ -104,6 +103,7 @@ def extract_next_links(url, resp):
     if resp.status != 200: #Comment (Quang): This one can miss the redirect links with code 301/302 which may lead to other valid pages. The code in other files already handle the redirect links correctly for us.
         logger.warning(f"DROP status={resp.status} error={resp.error} url={url}")
         return []
+     
     
     # If raw response is None, cant access content attribute, so check this before
     if resp.raw_response is None:
@@ -115,6 +115,8 @@ def extract_next_links(url, resp):
     if not content:
         logger.error(f"DROP no content, url: {url}")
         return []
+    
+    add_unique_page(resp.url)   
 
     if is_large_file(resp):
         logger.info(f"DROP large_file url={url}")
@@ -137,13 +139,12 @@ def extract_next_links(url, resp):
             return []
 
         # #save_page_content(resp.url, text) # save the text content
-        update_word_frequencies(text)
-        page_url = unique_url_key(resp.url)
-        if is_valid(page_url):
-            UNIQUE_PAGES.add(page_url)
-        update_subdomain_counts(url, SUBDOMAIN_COUNTS)
+        update_word_frequencies(text)    
+        page_url = urldefrag(resp.url)[0] 
+        update_subdomain_counts(resp.url, SUBDOMAIN_COUNTS)
 
         wc = count_words(text)
+        global LONGEST_PAGE_WORDS, LONGEST_PAGE_URL
         if wc > LONGEST_PAGE_WORDS:
             LONGEST_PAGE_WORDS = wc
             LONGEST_PAGE_URL = page_url
@@ -289,9 +290,9 @@ def low_info_wrapper(text: str, url: str) -> bool:
         logger.info(f"LOWINFO reason=few_unique_tokens, url={url}")
         return True
 
-    if has_repeated_sentences(text, min_len=30, repeat_threshold=10):
-        logger.info(f"LOWINFO reason=repeated_sentences, url={url}")
-        return True
+    # if has_repeated_sentences(text, min_len=30, repeat_threshold=10):
+    #     logger.info(f"LOWINFO reason=repeated_sentences, url={url}")
+    #     return True
 
     return False
 
@@ -324,30 +325,30 @@ def has_repeated_tokens(text: str) -> bool:
     return unique_ratio < 0.05
 
 
-def has_repeated_sentences(text: str) -> bool:
-    """
-    Handling pages with many repetitions, which may be junk
-    """
-    sentences = re.split(r"[.!?]\s+|\n+", text)  # basic heuristic to detect a sentence
+# def has_repeated_sentences(text: str) -> bool:
+#     """
+#     Handling pages with many repetitions, which may be junk
+#     """
+#     sentences = re.split(r"[.!?]\s+|\n+", text)  # basic heuristic to detect a sentence
 
-    counts = {}
-    total = 0
-    for sentence in sentences:
-        sentence = sentence.strip().lower()
-        sentence = re.sub(r"\s+", " ", sentence)
+#     counts = {}
+#     total = 0
+#     for sentence in sentences:
+#         sentence = sentence.strip().lower()
+#         sentence = re.sub(r"\s+", " ", sentence)
 
-        if len(sentence) < 30:
-            continue
+#         if len(sentence) < 30:
+#             continue
 
-        total += 1 
-        counts[sentence] = counts.get(sentence, 0) + 1
-        if counts[sentence] >= 10:
-            return True
+#         total += 1 
+#         counts[sentence] = counts.get(sentence, 0) + 1
+#         if counts[sentence] >= 10:
+#             return True
         
-        if total >= 300:
-            break
+#         if total >= 300:
+#             break
 
-    return False
+#     return False
 
 
 # --- Handling 200, but no data ---
@@ -400,8 +401,24 @@ def is_large_file(resp) -> bool:
 
 
 # --- Report ---
-def unique_url_key(u: str) -> str:
-    return urldefrag(u)[0]
+ALLOWED = (
+    ".ics.uci.edu",
+    ".cs.uci.edu",
+    ".informatics.uci.edu",
+    ".stat.uci.edu",
+)
+
+
+def is_allowed_host(host: str) -> bool:
+    host = (host or "").lower()
+    return any(host.endswith(suffix) for suffix in ALLOWED)
+
+
+def add_unique_page(fetched_url: str) -> None:
+    clean_url= urldefrag(fetched_url)[0]
+    host = (urlparse(clean_url).hostname or "").lower()
+    if is_allowed_host(host):
+        UNIQUE_PAGES.add(clean_url)
 
 
 def write_unique_pages_report() -> None:
