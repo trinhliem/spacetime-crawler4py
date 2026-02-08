@@ -89,7 +89,10 @@ class Frontier(object):
                 if self.closed: 
                     return None
 
-                if not self.ready_heap:  
+                if not self.ready_heap:
+                    if self.inflight == 0:  # if no job in line, just close
+                        self.closed = True
+                        return None
                     self.condition.wait()  # no domain, wait for population
                     continue
 
@@ -166,7 +169,8 @@ class Frontier(object):
             self.inflight = max(0, self.inflight - 1) # updates inflight as processing urls decrease by 1
             self._maybe_sync()
             self.condition.notify() # wakes ]up a worker that is sleeping/waiting
-    
+
+
     def _schedule_existing(self, url: str):
         """Only used for scheduling urls in shelve"""
         url = normalize(url)
@@ -186,7 +190,6 @@ class Frontier(object):
             heapq.heappush(self.ready_heap, (ready_time, domain))
 
 
-
     def close_if_done(self):
         """closes the program when all processes empty"""
         with self.condition:
@@ -194,17 +197,21 @@ class Frontier(object):
                 self.closed = True
                 self.condition.notify_all() # wakes everyone up and stops
 
+
     def close(self):
         with self.condition:
             self.closed = True
-            self.condition.notify_all()
+            self.condition.notify_all()  # wakes all workers up and exit
+
+        # flush to disk
         try:
             self.save.sync()
-
         finally:
             self.save.close()
 
+
     def _maybe_sync(self):
+        """Helper for syncing/flushing to shelve in batches for performance"""
         now = time.monotonic()
         self._dirty_writes += 1
         if (self._dirty_writes >= self.SYNC_EVERY) or (now - self._last_sync) >= self.SYNC_INTERVAL:
