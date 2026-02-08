@@ -8,16 +8,6 @@ import os
 import hashlib
 import csv
 
-# #parse user agents from config.ini
-# def load_user_agents(config_path: str):
-#     config = configparser.ConfigParser()
-#     config.read(config_path)
-#     return config.get("IDENTIFICATION", "USERAGENT").strip()
-
-# CONFIG_PATH = "config.ini"
-# USER_AGENT = load_user_agents("config.ini")
-
-
 MIN_WORDS = 100
 REPORT_DIR = "report"
 UNIQUE_PAGES = set()
@@ -27,7 +17,7 @@ WORD_FREQ: dict[str, int] = {}
 STOPWORDS = {
     "a","about","above","after","again","against","all","am","an","and","any","are",
     "aren't","as","at","be","because","been","before","being","below","between","both",
-    "but","by","can't","cannot","could","couldn't","did","didn't","do","does","doesn't",
+    "but","by","can", "can't","cannot","could","couldn't","did","didn't","do","does","doesn't",
     "doing","don't","down","during","each","few","for","from","further","had","hadn't",
     "has","hasn't","have","haven't","having","he","he'd","he'll","he's","her","here",
     "here's","hers","herself","him","himself","his","how","how's","i","i'd","i'll",
@@ -46,6 +36,7 @@ SUBDOMAIN_COUNTS: dict[str, int] = {}
 
 # configure logging
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO) 
 console_handler = logging.StreamHandler(sys.stdout)
 console_handler.setLevel(logging.INFO)
 formatter = logging.Formatter(
@@ -90,58 +81,57 @@ def extract_next_links(url, resp):
     
     # If it's a redirect (301/302), log and return the redirect URL for crawling since these can lead to valid pages. The crawler will handle the redirect URL as a new crawl.
     if resp.status in {301, 302}:
-        redirect_url = resp.headers.get("Location")
+        redirect_url = resp.raw_response.headers.get("Location")
         if redirect_url:
             logger.info(f"REDIRECT {url} TO {redirect_url}")
-            return [redirect_url] # return the redirect URL for crawler to handle as a new crawl
+            return [urljoin(resp.url, redirect_url)] # return the redirect URL for crawler to handle as a new crawl
         else:
             logger.warning(f"DROPPED {url}: redirect without location header")
             return []      
     
     # If the server did not return 200 (OK), skip parsing links from it since it may be unreliable for extraction
     if resp.status != 200: #Comment (Quang): This one can miss the redirect links with code 301/302 which may lead to other valid pages. The code in other files already handle the redirect links correctly for us.
-        logger.warning(f"DROP status={resp.status} error={resp.error} url={url}")
+        logger.warning(f"DROPPED status={resp.status} error={resp.error} url={url}")
         return []
-     
     
     # If raw response is None, cant access content attribute, so check this before
     if resp.raw_response is None:
-        logger.error(f"DROP no raw_response, url: {url}")
+        logger.error(f"DROPPED no raw_response, url: {url}")
         return []
     
     # If the response has no content, no links can be extracted 
     content = resp.raw_response.content
     if not content:
-        logger.error(f"DROP no content, url: {url}")
+        logger.error(f"DROPPED no content, url: {url}")
+        return [] 
+
+    if no_data_wrapper(resp):
         return []
-    
-    add_unique_page(resp.url)   
 
     if is_large_file(resp):
-        logger.info(f"DROP large_file url={url}")
+        logger.info(f"DROPPED large_file url={url}")
         return []
-    
+
     # grab links in resp.raw_response.content
     try:
         logger.info(f"Begin analyzing content url={url}")
         soup = BeautifulSoup(content, 'html.parser')
 
         # Sources : https://stackoverflow.com/questions/30565404/remove-all-style-scripts-and-html-tags-from-an-html-page
-        for tag in soup(["script", "style"]):
-            tag.decompose()
+        for tag in soup(["script", "style", "nav","footer","header"]):
+            tag.decompose() # remove js code, css code, and boilerplate code; just keep main content
         text = soup.get_text(separator=" ").strip()
 
-        if no_data_wrapper(resp, text):
-            return []
-        #
-        if low_info_wrapper(text, url):
+        if low_info_wrapper(text, url): # crawl pages with high textual info
             return []
 
-        # #save_page_content(resp.url, text) # save the text content
-        update_word_frequencies(text)    
+        current_fp = compute_simhash(text)
+        if is_near_duplicate_and_record(current_fp, url):
+            return []  # dont extract links from near-duplicates
+        
+        add_unique_page(resp.url)
+        update_word_frequencies(text)     # treat pages crawled as the pages to be analyzed for top 50 and largest page
         page_url = urldefrag(resp.url)[0] 
-        update_subdomain_counts(resp.url, SUBDOMAIN_COUNTS)
-
         wc = count_words(text)
         if wc > LONGEST_PAGE_WORDS:
             LONGEST_PAGE_WORDS = wc
@@ -153,7 +143,6 @@ def extract_next_links(url, resp):
             link = urljoin(resp.url, tag['href']) 
             clean_link = urldefrag(link)[0]
             clean_link = similar_no_info(clean_link) 
-
             extracted_links.add(clean_link)
 
         write_unique_pages_report()
@@ -174,27 +163,50 @@ def is_valid(url):
     # There are already some conditions that return False.
 
     try:
+        url = urldefrag(url)[0]
         parsed = urlparse(url)
-        if parsed.scheme not in set(["http", "https"]):
-            return False
 
-        path = parsed.path.lower()
-        if any(key in path for key in ["/auth/", "/signin", "/login", "/logout", "/oauth"]): # filter authentication related urls
+        if parsed.scheme not in set(["http", "https"]):
             return False
         
         # host must be in allowed domain set
-        host = parsed.hostname 
-        if host is None:
-            host = ""
-        else:
-            host = host.lower() # hostnames are case-insensitive
-        if not (
-            host.endswith(".ics.uci.edu")
-            or host.endswith(".cs.uci.edu")
-            or host.endswith(".informatics.uci.edu")
-            or host.endswith(".stat.uci.edu")
-        ):
-            return False
+        host = (parsed.hostname or "").lower()
+        if not is_allowed_host(host):
+            return False        
+        
+        # hard coding infinite trap handling from observation
+        query_params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        qkeys = {k.lower() for k in query_params.keys()}
+
+        if host == "grape.ics.uci.edu":
+            grape_revision_keys = {"version", "action", "format"}
+            if qkeys & grape_revision_keys:
+                logger.info(f"DROPPED grape_revision url={url}")
+                return False
+            grape_timeline_keys = {"from", "precision"}
+            if qkeys & grape_timeline_keys:
+                logger.info(f"DROPPED grape_timeline url={url}")
+                return False
+
+        if host == "wics.ics.uci.edu":
+            wics_event_keys = {"tribe-bar-date", "eventdisplay", "ical", "outlook-ical"}
+            if qkeys & wics_event_keys:
+                logger.info(f"DROPPED wics_events url={url}")
+                return False
+            if re.search(r"/events/.*?/day/\d{4}-\d{2}-\d{2}(/|$)", path):
+                logger.info(f"DROPPED wics_day_calendar url={url}")
+                return False
+            wics_noise_keys = {"share", "locale", "display", "next", "ref", "entry_point"}
+            if qkeys & wics_noise_keys:
+                logger.info(f"DROPPED wics_noise url={url}")
+                return False
+
+        if host == "cml.ics.uci.edu":
+            cml_keys = {"page", "subpage"} # same without page and subpage query, seems redundant
+            if qkeys & cml_keys:
+                logger.info(f"DROPPED cml_redundant url={url}")
+                return False
+
         
         if re.match(
             r".*\.(css|js|bmp|gif|jpe?g|ico"
@@ -204,7 +216,11 @@ def is_valid(url):
             + r"|data|dat|exe|bz2|tar|msi|bin|7z|psd|dmg|iso"
             + r"|epub|dll|cnf|tgz|sha1"
             + r"|thmx|mso|arff|rtf|jar|csv"
-            + r"|rm|smil|wmv|swf|wma|zip|rar|gz)$", parsed.path.lower()):
+            + r"|rm|smil|wmv|swf|wma|zip|rar|gz|z"
+            + r"|txt|xml|rss|svg"
+            + r"|py|java|c|cpp|h|class|sh|sql|ipynb|nb|war"
+            + r")$",
+              parsed.path.lower()):
             return False
     
         # --- TRAP DETECTIONS ---
@@ -230,6 +246,23 @@ def is_valid(url):
             logger.info(f"DROPPED suspicious long segment URL: {url}")
             return False
         
+        # authentication/OAuth flow URL doesnt contain useful content
+        path = parsed.path.lower()
+        if any(key in path for key in ["/auth/", "/signin", "/login", "/logout", "/oauth"]): # filter authentication related urls
+            logger.info(f"DROPPED suspicious long segment URL: {url}")
+            return False
+        
+        # Pagination - allow only first 10 pages
+        m = re.search(r"/page/(\d+)/?$", path)
+        if m:
+            page_num = int(m.group(1))
+            if page_num > 10:
+                logger.info(f"DROPPED path_pagination page={page_num} url={url}")
+                return False
+
+        if additional_trap_handling_wrapper(url, parsed, query_params):
+            return False
+        
         return True
 
     except TypeError:
@@ -238,6 +271,7 @@ def is_valid(url):
 
 
 def tokenize_text(text: str):
+    # TODO handle aprostrophe
     # allow non-English characters for this assignment
     current = []
     for ch in text:
@@ -292,10 +326,6 @@ def low_info_wrapper(text: str, url: str) -> bool:
         logger.info(f"DROPPED reason=few_unique_tokens, url={url}")
         return True
 
-    # if has_repeated_sentences(text, min_len=30, repeat_threshold=10):
-    #     logger.info(f"LOWINFO reason=repeated_sentences, url={url}")
-    #     return True
-
     return False
 
 
@@ -327,34 +357,8 @@ def has_repeated_tokens(text: str) -> bool:
     return unique_ratio < 0.05
 
 
-# def has_repeated_sentences(text: str) -> bool:
-#     """
-#     Handling pages with many repetitions, which may be junk
-#     """
-#     sentences = re.split(r"[.!?]\s+|\n+", text)  # basic heuristic to detect a sentence
-
-#     counts = {}
-#     total = 0
-#     for sentence in sentences:
-#         sentence = sentence.strip().lower()
-#         sentence = re.sub(r"\s+", " ", sentence)
-
-#         if len(sentence) < 30:
-#             continue
-
-#         total += 1 
-#         counts[sentence] = counts.get(sentence, 0) + 1
-#         if counts[sentence] >= 10:
-#             return True
-        
-#         if total >= 300:
-#             break
-
-#     return False
-
-
 # --- Handling 200, but no data ---
-def no_data_wrapper(response, text: str) -> bool:
+def no_data_wrapper(response) -> bool:
     '''
     Wrapper for 200, but no data.
     '''
@@ -385,42 +389,93 @@ def is_html_content_type(response) -> bool:
 
 # --- Handling Large files, Low info --- 
 def is_large_file(resp) -> bool:
+    '''
+    - Some large files are handled from being downloaded in is_valid() by filtering 
+    non-HTML file such as files with extensions liks .pdf, .ipynb, .txt
+    - This method is an additional filtering for large HTML files that could waste
+    crawling budget
+    - It also prevents any non-HTML files that doesn't have the matching extension
+    in the is_valid() from being crawled
+    '''
+    max_html_bytes = 1_000_000
+    max_other_bytes = 300_000
+
     try:
         headers = resp.raw_response.headers
-        content_length = headers.get("Content-Length")
+        content_length = (headers.get("Content-Length") or "").strip()
+        content_type = (headers.get("Content-Type") or "").lower()
+
         if content_length and content_length.isdigit():
             size_bytes = int(content_length)
-
-            if size_bytes > 5_000_000: # 5MB
-                return True
+            is_html = ("text/html" in content_type) or ("application/xhtml+xml" in content_type)
+            limit = max_html_bytes if is_html else max_other_bytes
+            return size_bytes > limit
     except Exception:
         pass
     return False
 
 
+# --- Additional trap handling --- 
+def additional_trap_handling_wrapper(url: str, query_params: dict) -> bool:
+    qp_keys = {str(k).lower() for k in (query_params or {}).keys()}
 
-# TODO Shizuka -- EC Simhas
+    if is_query_trap(qp_keys):
+        logger.info(f"DROPPED query_trap url={url}")
+        return True
+    if len(url) > 300:
+        logger.info(f"DROPPED long_url len={len(url)} url={url}")
+        return True
+
+    return False
+
+def is_query_trap(query_params: dict) -> bool:
+    # generalized version of the hardcoded handling of traps in is_valid()
+    NOISE_KEYS = {
+        'share', 'action', 'format',
+        'eventdisplay', 'outlook-ical',
+        'ical', 'tribe-bar-date', 'lang', 'version', 'do'
+    }
+    
+    if len(query_params) > 5:
+        return True
+    if any(key.lower() in NOISE_KEYS for key in query_params.keys()):
+        return True
+
+    return False
 
 
 # --- Report ---
-ALLOWED = (
+ALLOWED_BASE_HOSTS = {
+    "ics.uci.edu",
+    "cs.uci.edu",
+    "informatics.uci.edu",
+    "stat.uci.edu",
+}
+ALLOWED_SUFFIXES = (
     ".ics.uci.edu",
     ".cs.uci.edu",
     ".informatics.uci.edu",
     ".stat.uci.edu",
 )
 
-
 def is_allowed_host(host: str) -> bool:
     host = (host or "").lower()
-    return any(host.endswith(suffix) for suffix in ALLOWED)
+    return host in ALLOWED_BASE_HOSTS or any(host.endswith(suf) for suf in ALLOWED_SUFFIXES)
 
 
-def add_unique_page(fetched_url: str) -> None:
+def add_unique_page(fetched_url: str) -> bool:
     clean_url= urldefrag(fetched_url)[0]
     host = (urlparse(clean_url).hostname or "").lower()
-    if is_allowed_host(host):
-        UNIQUE_PAGES.add(clean_url)
+    if not is_allowed_host(host):       # check in case redirected url is different (may be unnecessary)
+        return False
+
+    if clean_url in UNIQUE_PAGES:
+        return False
+
+    UNIQUE_PAGES.add(clean_url)
+    SUBDOMAIN_COUNTS[host] = SUBDOMAIN_COUNTS.get(host, 0) + 1
+    
+    return True
 
 
 def write_unique_pages_report() -> None:
@@ -440,7 +495,7 @@ def count_words(text: str) -> int:
     return num_words
 
 
-def write_longest_page_report() -> None:
+def write_longest_page_report() -> None:            # longest page number does not omit stop words
     os.makedirs(REPORT_DIR, exist_ok=True)
     out_path = os.path.join(REPORT_DIR, "longest_page.txt")
     with open(out_path, "w") as f:
@@ -468,17 +523,75 @@ def write_top_50_words(out_path: str) -> None:
             f.write(f"{word}, {count}\n")
 
 
-def update_subdomain_counts(url: str, subdomain_counts: dict[str, int]) -> None:
-    clean_url = urldefrag(url)[0]
-    host = (urlparse(clean_url).hostname or "").lower()
-    if not host:
-        return
-    subdomain_counts[host] = subdomain_counts.get(host, 0) + 1
-
-
 def write_subdomains_report(subdomain_counts: dict[str, int], out_path: str) -> None:
     os.makedirs(REPORT_DIR, exist_ok=True)
     out_path = os.path.join(REPORT_DIR, "subdomains.txt")
     with open(out_path, "w", encoding="utf-8") as f:
-        for host in sorted(subdomain_counts.keys()):
-            f.write(f"{host}, {subdomain_counts[host]}\n")
+        for host in sorted(subdomain_counts.keys()): # sort in alphabetical order
+            f.write(f"{host}, {subdomain_counts[host]}\n") 
+
+
+# --- Simhash ---
+SEEN_SIMHASHES: list[tuple[int, str]] = [] 
+SIMHASH_THRESHOLD = 0.92 # not too strict, nor not too lenient
+
+"""
+Method (Source : Lecture 11 slides)
+1. convert document into features and weights where words are weighted by frequency
+2. For each word, generate a hash
+3. Maintain a vector V, add weight if the bit is 1
+4. compare two simhashes by how many bits atch
+
+Limitation of this method:
+- Possible collision in hash value
+- Multiple pages may generate same fingerprint despite differing content
+
+Note
+2^64 possible fingerprints 
+"""
+def compute_simhash(text: str, bits: int = 64) -> int:
+    # 1. Convert to features and weights
+    weights = {}
+    for token in tokenize_text(text):
+        if token in STOPWORDS or len(token) <= 1:
+            continue # filter stopwords, single letters
+        weights[token] = weights.get(token, 0) + 1
+    if not weights:
+        return 0 # edge case  : empty page
+
+    # 2. Generate hash
+    V = [0] * bits
+    for word, weight in weights.items():
+        h_digest = hashlib.md5(word.encode('utf-8')).digest() # convert string to bytes, MD5 then computes hash object, and digest() returns raw hash bytes (md5 is in 16bytes or 128bits)
+        h_int = int.from_bytes(h_digest, byteorder='big') # convert hash bytes to integer
+
+        for i in range(bits):
+            bit = (h_int >> i) & 1 # Check if the i-th bit of the hash is 1 or 0
+            if bit == 1:
+                V[i] += weight # 3. add weight for which the corresponding bit in the word's hash value is 1 
+            else:
+                V[i] -= weight # 3. subtract weight if 0
+
+    # 4. fingerprint generation
+    fingerprint = 0
+    for i in range(bits): 
+        if V[i] > 0:
+            fingerprint |= (1 << i) # set the ith bit to 1 if the ith component of V is positive else 0
+    
+    return fingerprint # generate fingerprint for each text
+
+def get_similarity(f1: int, f2: int, bits: int = 64) -> float:
+    dist = (f1 ^ f2).bit_count()
+    return (bits - dist) / bits
+
+def is_near_duplicate_and_record(current_fp: int, url: str) -> bool:
+    cur_url = urldefrag(url)[0]
+
+    for seen_fp, seen_url in SEEN_SIMHASHES:
+        sim = get_similarity(current_fp, seen_fp)
+        if sim >= SIMHASH_THRESHOLD:
+            logger.info(f"DUPLICATE DETECTED: {cur_url} is near-duplicate of {seen_url}")
+            return True
+
+    SEEN_SIMHASHES.append((current_fp, cur_url))
+    return False
