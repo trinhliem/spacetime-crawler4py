@@ -165,6 +165,7 @@ def is_valid(url):
     try:
         url = urldefrag(url)[0]
         parsed = urlparse(url)
+        path = parsed.path.lower()
 
         if parsed.scheme not in set(["http", "https"]):
             return False
@@ -247,7 +248,6 @@ def is_valid(url):
             return False
         
         # authentication/OAuth flow URL doesnt contain useful content
-        path = parsed.path.lower()
         if any(key in path for key in ["/auth/", "/signin", "/login", "/logout", "/oauth"]): # filter authentication related urls
             logger.info(f"DROPPED suspicious long segment URL: {url}")
             return False
@@ -260,7 +260,7 @@ def is_valid(url):
                 logger.info(f"DROPPED path_pagination page={page_num} url={url}")
                 return False
 
-        if additional_trap_handling_wrapper(url, parsed, query_params):
+        if additional_trap_handling_wrapper(url, query_params):
             return False
         
         return True
@@ -417,30 +417,26 @@ def is_large_file(resp) -> bool:
 
 # --- Additional trap handling --- 
 def additional_trap_handling_wrapper(url: str, query_params: dict) -> bool:
-    qp_keys = {str(k).lower() for k in (query_params or {}).keys()}
-
-    if is_query_trap(qp_keys):
+    qkeys = {str(k).lower() for k in (query_params or {}).keys()}
+    if is_query_trap(qkeys):
         logger.info(f"DROPPED query_trap url={url}")
         return True
     if len(url) > 300:
         logger.info(f"DROPPED long_url len={len(url)} url={url}")
         return True
-
     return False
 
-def is_query_trap(query_params: dict) -> bool:
-    # generalized version of the hardcoded handling of traps in is_valid()
-    NOISE_KEYS = {
-        'share', 'action', 'format',
-        'eventdisplay', 'outlook-ical',
-        'ical', 'tribe-bar-date', 'lang', 'version', 'do'
-    }
-    
-    if len(query_params) > 5:
-        return True
-    if any(key.lower() in NOISE_KEYS for key in query_params.keys()):
-        return True
 
+def is_query_trap(qkeys: set[str]) -> bool:
+    NOISE_KEYS = {
+        "share", "action", "format",
+        "eventdisplay", "outlook-ical",
+        "ical", "tribe-bar-date", "lang", "version", "do"
+    }
+    if len(qkeys) > 5:
+        return True
+    if qkeys & NOISE_KEYS:
+        return True
     return False
 
 
@@ -505,7 +501,7 @@ def write_longest_page_report() -> None:            # longest page number does n
 
 def update_word_frequencies(text: str) -> None:
     for token in tokenize_text(text):
-        if token.isalnum() and len(token) <= 1:     # remove one letter, still include digit     
+        if token.isalpha() and len(token) <= 1:     # remove one letter, still include digit     
             continue
         if token.isdigit():
             continue
