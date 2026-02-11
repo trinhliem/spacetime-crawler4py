@@ -245,7 +245,10 @@ def is_valid(url):
             if page_num > 10:
                 logger.info(f"DROPPED path_pagination page={page_num} url={url}")
                 return False
-            
+
+        if additional_trap_handling_wrapper(url, query_params):
+            return False
+                  
         return True
 
     except TypeError:
