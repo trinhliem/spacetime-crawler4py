@@ -392,6 +392,35 @@ def is_large_file(resp) -> bool:
     return False
 
 
+# --- Additional trap handling --- 
+def additional_trap_handling_wrapper(url: str, query_params: dict) -> bool:
+    qp_keys = {str(k).lower() for k in (query_params or {}).keys()}
+
+    if is_query_trap(qp_keys):
+        logger.info(f"DROPPED query_trap url={url}")
+        return True
+    if len(url) > 300:
+        logger.info(f"DROPPED long_url len={len(url)} url={url}")
+        return True
+
+    return False
+
+def is_query_trap(query_params: dict) -> bool:
+    # generalized version of the hardcoded handling of traps in is_valid()
+    NOISE_KEYS = {
+        'share', 'action', 'format',
+        'eventdisplay', 'outlook-ical',
+        'ical', 'tribe-bar-date', 'lang', 'version', 'do'
+    }
+    
+    if len(query_params) > 10:
+        return True
+    if any(key.lower() in NOISE_KEYS for key in query_params.keys()):
+        return True
+
+    return False
+
+
 # --- Report ---
 ALLOWED_BASE_HOSTS = {
     "ics.uci.edu",
