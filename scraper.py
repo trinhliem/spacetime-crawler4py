@@ -118,7 +118,7 @@ def extract_next_links(url, resp):
         soup = BeautifulSoup(content, 'html.parser')
 
         # Sources : https://stackoverflow.com/questions/30565404/remove-all-style-scripts-and-html-tags-from-an-html-page
-        for tag in soup(["script", "style", "nav","footer","header"]):
+        for tag in soup(["script", "style"]):
             tag.decompose() # remove js code, css code, and boilerplate code; just keep main content
         text = soup.get_text(separator=" ").strip()
 
