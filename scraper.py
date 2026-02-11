@@ -380,19 +380,15 @@ def is_large_file(resp) -> bool:
     - It also prevents any non-HTML files that doesn't have the matching extension
     in the is_valid() from being crawled
     '''
-    max_html_bytes = 1_000_000
-    max_other_bytes = 300_000
+    max_bytes = 1_000_000  
 
     try:
         headers = resp.raw_response.headers
         content_length = (headers.get("Content-Length") or "").strip()
-        content_type = (headers.get("Content-Type") or "").lower()
 
         if content_length and content_length.isdigit():
             size_bytes = int(content_length)
-            is_html = ("text/html" in content_type) or ("application/xhtml+xml" in content_type)
-            limit = max_html_bytes if is_html else max_other_bytes
-            return size_bytes > limit
+            return size_bytes > max_bytes
     except Exception:
         pass
     return False
