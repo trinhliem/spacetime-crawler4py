@@ -147,8 +147,8 @@ def extract_next_links(url, resp):
 
         write_unique_pages_report()
         write_longest_page_report()
-        write_top_50_words("common_words.txt")
-        write_subdomains_report(SUBDOMAIN_COUNTS, "subdomains.txt")
+        write_top_50_words()
+        write_subdomains_report(SUBDOMAIN_COUNTS)
             
         return list(extracted_links)
 
@@ -468,7 +468,7 @@ def update_word_frequencies(text: str) -> None:
         WORD_FREQ[token] = WORD_FREQ.get(token, 0) + 1
 
 
-def write_top_50_words(out_path: str) -> None:
+def write_top_50_words() -> None:
     os.makedirs(REPORT_DIR, exist_ok=True)
     out_path = os.path.join(REPORT_DIR, "common_words.txt")
     items = sorted(WORD_FREQ.items(), key=lambda kv: (-kv[1], kv[0]))[:50]
@@ -477,7 +477,7 @@ def write_top_50_words(out_path: str) -> None:
             f.write(f"{word}, {count}\n")
 
 
-def write_subdomains_report(subdomain_counts: dict[str, int], out_path: str) -> None:
+def write_subdomains_report(subdomain_counts: dict[str, int]) -> None:
     os.makedirs(REPORT_DIR, exist_ok=True)
     out_path = os.path.join(REPORT_DIR, "subdomains.txt")
     with open(out_path, "w", encoding="utf-8") as f:
