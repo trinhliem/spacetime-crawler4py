@@ -242,7 +242,7 @@ def is_valid(url):
         m = re.search(r"/page/(\d+)/?$", path)
         if m:
             page_num = int(m.group(1))
-            if page_num > 20:
+            if page_num > 10:
                 logger.info(f"DROPPED path_pagination page={page_num} url={url}")
                 return False
             
@@ -408,9 +408,9 @@ def additional_trap_handling_wrapper(url: str, query_params: dict) -> bool:
 def is_query_trap(query_params: dict) -> bool:
     # generalized version of the hardcoded handling of traps in is_valid()
     NOISE_KEYS = {
-        'share', 'action', 'format',
+        'share', 
         'eventdisplay', 'outlook-ical',
-        'ical', 'tribe-bar-date', 'lang', 'version', 'do'
+        'ical', 'tribe-bar-date'
     }
     
     if len(query_params) > 10:
