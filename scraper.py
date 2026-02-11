@@ -194,20 +194,6 @@ def is_valid(url):
             if qkeys & wics_event_keys:
                 logger.info(f"DROPPED wics_events url={url}")
                 return False
-            if re.search(r"/events/.*?/day/\d{4}-\d{2}-\d{2}(/|$)", path):
-                logger.info(f"DROPPED wics_day_calendar url={url}")
-                return False
-            wics_noise_keys = {"share", "locale", "display", "next", "ref", "entry_point"}
-            if qkeys & wics_noise_keys:
-                logger.info(f"DROPPED wics_noise url={url}")
-                return False
-
-        if host == "cml.ics.uci.edu":
-            cml_keys = {"page", "subpage"} # same without page and subpage query, seems redundant
-            if qkeys & cml_keys:
-                logger.info(f"DROPPED cml_redundant url={url}")
-                return False
-
         
         if re.match(
             r".*\.(css|js|bmp|gif|jpe?g|ico"
@@ -243,7 +229,7 @@ def is_valid(url):
         #3. Avoid spider traps / manual patterns
         #Example: very long numeric path segments (common traps)
         segments = [seg for seg in parsed.path.split("/") if seg]
-        if any(len(seg) > 50 for seg in segments):
+        if any(len(seg) > 100 for seg in segments):
             logger.info(f"DROPPED suspicious long segment URL: {url}")
             return False
         
@@ -256,13 +242,10 @@ def is_valid(url):
         m = re.search(r"/page/(\d+)/?$", path)
         if m:
             page_num = int(m.group(1))
-            if page_num > 10:
+            if page_num > 20:
                 logger.info(f"DROPPED path_pagination page={page_num} url={url}")
                 return False
-
-        if additional_trap_handling_wrapper(url, query_params):
-            return False
-        
+            
         return True
 
     except TypeError:
@@ -415,31 +398,6 @@ def is_large_file(resp) -> bool:
     return False
 
 
-# --- Additional trap handling --- 
-def additional_trap_handling_wrapper(url: str, query_params: dict) -> bool:
-    qkeys = {str(k).lower() for k in (query_params or {}).keys()}
-    if is_query_trap(qkeys):
-        logger.info(f"DROPPED query_trap url={url}")
-        return True
-    if len(url) > 300:
-        logger.info(f"DROPPED long_url len={len(url)} url={url}")
-        return True
-    return False
-
-
-def is_query_trap(qkeys: set[str]) -> bool:
-    NOISE_KEYS = {
-        "share", "action", "format",
-        "eventdisplay", "outlook-ical",
-        "ical", "tribe-bar-date", "lang", "version", "do"
-    }
-    if len(qkeys) > 5:
-        return True
-    if qkeys & NOISE_KEYS:
-        return True
-    return False
-
-
 # --- Report ---
 ALLOWED_BASE_HOSTS = {
     "ics.uci.edu",
@@ -529,7 +487,7 @@ def write_subdomains_report(subdomain_counts: dict[str, int], out_path: str) -> 
 
 # --- Simhash ---
 SEEN_SIMHASHES: list[tuple[int, str]] = [] 
-SIMHASH_THRESHOLD = 0.92 # not too strict, nor not too lenient
+SIMHASH_THRESHOLD = 0.95 # not too strict, nor not too lenient
 
 """
 Method (Source : Lecture 11 slides)
