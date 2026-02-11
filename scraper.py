@@ -377,8 +377,6 @@ def is_large_file(resp) -> bool:
     non-HTML file such as files with extensions liks .pdf, .ipynb, .txt
     - This method is an additional filtering for large HTML files that could waste
     crawling budget
-    - It also prevents any non-HTML files that doesn't have the matching extension
-    in the is_valid() from being crawled
     '''
     max_bytes = 1_000_000  
 
