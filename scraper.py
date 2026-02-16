@@ -118,7 +118,7 @@ def extract_next_links(url, resp):
         soup = BeautifulSoup(content, 'html.parser')
 
         # Sources : https://stackoverflow.com/questions/30565404/remove-all-style-scripts-and-html-tags-from-an-html-page
-        for tag in soup(["script", "style"]):
+        for tag in soup(["script", "style", "header", "footer"]):
             tag.decompose() # remove js code, css code, and boilerplate code; just keep main content
         text = soup.get_text(separator=" ").strip()
 
@@ -229,13 +229,13 @@ def is_valid(url):
         #3. Avoid spider traps / manual patterns
         #Example: very long numeric path segments (common traps)
         segments = [seg for seg in parsed.path.split("/") if seg]
-        if any(len(seg) > 100 for seg in segments):
+        if any(len(seg) > 50 for seg in segments):
             logger.info(f"DROPPED suspicious long segment URL: {url}")
             return False
         
         # authentication/OAuth flow URL doesnt contain useful content
         if any(key in path for key in ["/auth/", "/signin", "/login", "/logout", "/oauth"]): # filter authentication related urls
-            logger.info(f"DROPPED suspicious long segment URL: {url}")
+            logger.info(f"DROPPED authL: {url}")
             return False
         
         # Pagination - allow only first 10 pages
@@ -408,7 +408,7 @@ def additional_trap_handling_wrapper(url: str, query_params: dict) -> bool:
 
     return False
 
-def is_query_trap(query_params: dict) -> bool:
+def is_query_trap(query_params: set[str]) -> bool:
     # generalized version of the hardcoded handling of traps in is_valid()
     NOISE_KEYS = {
         'share', 
@@ -416,9 +416,9 @@ def is_query_trap(query_params: dict) -> bool:
         'ical', 'tribe-bar-date'
     }
     
-    if len(query_params) > 10:
+    if len(query_params) > 7:
         return True
-    if any(key.lower() in NOISE_KEYS for key in query_params.keys()):
+    if query_params & NOISE_KEYS:
         return True
 
     return False
@@ -513,7 +513,7 @@ def write_subdomains_report(subdomain_counts: dict[str, int]) -> None:
 
 # --- Simhash ---
 SEEN_SIMHASHES: list[tuple[int, str]] = [] 
-SIMHASH_THRESHOLD = 0.95 # not too strict, nor not too lenient
+SIMHASH_THRESHOLD = 0.92 # not too strict, nor not too lenient
 
 """
 Method (Source : Lecture 11 slides)
